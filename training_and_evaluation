@@ -160,8 +160,7 @@ def load_and_preprocess_data(tokenizer):
     
     return train_data, validation_data, test_data
 
-# This part is for evalauting the fine-tuned model
-
+# The remaining part is for evalauting the fine-tuned model
 # Load the model and the tokenizer from the saved directory, 
 model_path = './model_output/trained_model'
 tokenizer = T5Tokenizer.from_pretrained(model_path)
