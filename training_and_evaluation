@@ -122,7 +122,6 @@ def equivalence(expr1_str, expr2_str):
     except Exception as e:
         logging.error(f"An error occurred during equivalence check: {e}", exc_info=True)
         return None
-    
 
 def tokenize_data(dataset, tokenizer):
     def tokenize_function(examples):
@@ -180,10 +179,8 @@ def evaluation(test_dataset, model, tokenizer, device, min_length=1, num_beams=5
     for i in range(total_predictions):
         input_ids = test_dataset[i]['input_ids'].unsqueeze(0).to(device)
         labels = test_dataset[i]['labels'].unsqueeze(0).to(device)
-        
         sentence = tokenizer.decode(input_ids[0], skip_special_tokens=True)
         nl_sentence = ' '.join([token.split('_')[0] for token in sentence.replace("translate English to First-order Logic: ", "").split()])
-        
         print("NL Sentence:", nl_sentence)
         
         with torch.no_grad():
@@ -209,27 +206,22 @@ def evaluation(test_dataset, model, tokenizer, device, min_length=1, num_beams=5
         print("Ill-formed Reference:", well_formed_ref)
 
         if well_formed_pred and well_formed_ref:
-            well_formed_predictions += 1
-            
+            well_formed_predictions += 1   
             if prediction == reference:
                 accurate_predictions += 1
-            
             if compare_structure(prediction, reference):
                 formally_accurate_predictions += 1
             else:
                 if equivalence(prediction, reference):
                     equivalent_predictions += 1
-
         else:
             ill_formed_predictions += 1
     
     adjusted_total_predictions = max(total_predictions - ill_formed_predictions, 1)
-
     accuracy_rate = accurate_predictions / adjusted_total_predictions
     well_formed_rate = well_formed_predictions / total_predictions
     formal_rate = formally_accurate_predictions / adjusted_total_predictions
     equivalent_rate = (equivalent_predictions + formally_accurate_predictions)  / adjusted_total_predictions
-
     return accuracy_rate, well_formed_rate, formal_rate, equivalent_rate
 
 accuracy_rate, well_formed_rate, formal_rate, equivalent_rate = evaluation(test_dataset, model, tokenizer, device)
