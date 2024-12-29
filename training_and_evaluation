@@ -160,6 +160,64 @@ def load_and_preprocess_data(tokenizer):
     
     return train_data, validation_data, test_data
 
+# Load the tokenizer, preprocess the data, and load the model depending on your compute power
+tokenizer = T5Tokenizer.from_pretrained("t5-base")
+train_dataset, validation_dataset, test_dataset = load_and_preprocess_data(tokenizer)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def model_init():
+    return T5ForConditionalGeneration.from_pretrained("t5-base").to(device)
+
+# Always a good practice to check whether the tokenization process is handled correctly
+def check_tokenization(encodings, tokenizer):
+    for i in range(min(5, len(encodings['input_ids']))): 
+        print("NL:", tokenizer.decode(encodings['input_ids'][i], skip_special_tokens=True))
+        print("FOL:", tokenizer.decode(encodings['labels'][i], skip_special_tokens=True))
+check_tokenization(train_dataset, tokenizer)
+
+# Set up training arguments
+training_args = TrainingArguments(
+    output_dir='./model_output',
+    per_device_train_batch_size=8,
+    per_device_eval_batch_size=8,
+    num_train_epochs=2,
+    logging_dir='./logs',
+    evaluation_strategy="epoch",
+    logging_steps=50,
+    save_strategy="epoch",
+    save_total_limit=1,
+    load_best_model_at_end=True,
+    learning_rate=0.001,
+    weight_decay=0.01,
+    adam_epsilon=1e-8,
+    warmup_steps=500,
+    gradient_accumulation_steps=1,
+    disable_tqdm=False
+)
+
+model = model_init()
+
+# Create Trainer instance
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=validation_dataset,
+)
+
+# Start training
+trainer.train()
+
+# Evaluate the model on the test set
+evaluation_results = trainer.evaluate(test_dataset)
+print(evaluation_results)
+
+# Save the trained model and tokenizer
+model_path = './model_output/trained_model'
+trainer.save_model(model_path)
+tokenizer.save_pretrained(model_path)
+
 # The remaining part is for evalauting the fine-tuned model
 # Load the model and the tokenizer from the saved directory, 
 model_path = './model_output/trained_model'
