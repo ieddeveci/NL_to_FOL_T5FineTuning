@@ -11,6 +11,10 @@ import torch
 from transformers import T5Tokenizer, T5ForConditionalGeneration, Trainer, TrainingArguments
 from tqdm.notebook import tqdm
 
+#-----------------------------------------------------------
+# Preprocess and Metric Codes
+#-----------------------------------------------------------
+
 # Converts FOL symbols to tokenizable representation for preprocessing.
 def fol_preprocess(expression):
     replacements = {
@@ -123,6 +127,10 @@ def equivalence(expr1_str, expr2_str):
         logging.error(f"An error occurred during equivalence check: {e}", exc_info=True)
         return None
 
+#-----------------------------------------------------------
+# Tokenization, Loading the dataset with preprocessing
+#-----------------------------------------------------------
+
 def tokenize_data(dataset, tokenizer):
     def tokenize_function(examples):
         # Tokenize both 'NL' and 'FOL' using padding and truncation
@@ -159,6 +167,10 @@ def load_and_preprocess_data(tokenizer):
     test_data = tokenize_data(test_data, tokenizer)
     
     return train_data, validation_data, test_data
+
+#-----------------------------------------------------------
+# Training
+#-----------------------------------------------------------
 
 # Load the tokenizer, preprocess the data, and load the model depending on your compute power
 tokenizer = T5Tokenizer.from_pretrained("t5-base")
@@ -209,16 +221,14 @@ trainer = Trainer(
 # Start training
 trainer.train()
 
-# Evaluate the model on the test set
-evaluation_results = trainer.evaluate(test_dataset)
-print(evaluation_results)
-
-# Save the trained model and tokenizer
+# Save the trained model and tokenizer at the end of the training
 model_path = './model_output/trained_model'
 trainer.save_model(model_path)
 tokenizer.save_pretrained(model_path)
 
-# The remaining part is for evalauting the fine-tuned model
+#-----------------------------------------------------------
+# Evaluation
+#-----------------------------------------------------------
 # Load the model and the tokenizer from the saved directory, 
 model_path = './model_output/trained_model'
 tokenizer = T5Tokenizer.from_pretrained(model_path)
