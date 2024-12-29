@@ -1,0 +1,239 @@
+import unicodedata
+import re
+from nltk.sem.logic import Expression
+from nltk.inference import Prover9
+import os
+import logging
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from datasets import Dataset
+import torch
+from transformers import T5Tokenizer, T5ForConditionalGeneration, Trainer, TrainingArguments
+from tqdm.notebook import tqdm
+
+# Converts FOL symbols to tokenizable representation for preprocessing.
+def fol_preprocess(expression):
+    replacements = {
+        '∀': ' FORALL ',
+        '∃': ' EXISTS ',
+        '¬': 'NOT ',
+        '∧': 'AND',
+        '⊕': 'XOR',
+        '∨': 'OR',
+        '→': 'THEN',
+        '↔': 'IFF',
+    }
+    for symbol, replacement in replacements.items():
+        expression = expression.replace(symbol, replacement)
+    return expression
+
+# Converts tokenizable representation back to FOL symbols for postprocessing.
+def fol_postprocess(text):
+    inv_replacements = {
+        'FORALL': '∀',
+        'EXISTS': '∃',
+        'NOT': '¬',
+        'AND': '∧',
+        'XOR': '⊕',
+        'OR': '∨',
+        'THEN': '→',
+        'IFF': '↔',
+    }
+    for replacement, symbol in inv_replacements.items():
+        text = text.replace(replacement, symbol)
+    return text
+
+# Normalizes and converts a natural language sentence to lowercase.
+def nl_preprocess(sentence):
+    return unicodedata.normalize('NFKC', sentence.lower())
+
+# Converts a logical expression into NLTK-compatible format by replacing symbols with NLTK equivalents.
+def to_nltk(expression):
+    replacements = {
+        '∀': ' all ',
+        '∃': ' exists ',
+        '¬': '-',
+        '∧': '&',
+        '⊕': '!=',
+        '∨': '|',
+        '→': '->',
+        '↔': '<->',
+        'FORALL': ' all ',
+        'EXISTS': ' exists ',
+        'NOT': ' - ',
+        'AND': '&',
+        'XOR': '!=',
+        'OR': '|',
+        'THEN': '->',
+        'IFF': '<->',
+    }
+    for symbol, nltk in replacements.items():
+        expression = re.sub(re.escape(symbol), nltk, expression)
+    return expression
+
+# Checks if a logical expression has no free variables.
+def check_grammar(expression):
+    nltk_expression = to_nltk(expression)
+    try:
+        parsed_expr = Expression.fromstring(nltk_expression)
+        return len(parsed_expr.free()) == 0
+    except Exception:
+        return False
+
+# Replaces predicate names in a logical expression with numeric placeholders.
+def predicate_abstraction(expr):
+    predicates = re.findall(r'\b([a-zA-Z0-9_]+)\(', expr)
+    predicate_count = {pred: idx + 1 for idx, pred in enumerate(set(predicates))}
+    for pred, count in predicate_count.items():
+        expr = re.sub(r'\b' + re.escape(pred) + r'\(', f"{count}(", expr)
+    return expr
+
+# Compares the abstracted structures of two logical expressions.
+def compare_structure(expr1, expr2):
+    abstracted_expr1 = predicate_abstraction(expr1)
+    abstracted_expr2 = predicate_abstraction(expr2)
+    exp1 = to_nltk(abstracted_expr1)
+    exp2 = to_nltk(abstracted_expr2)
+    try:
+        parsed_expr1 = Expression.fromstring(exp1)
+        parsed_expr2 = Expression.fromstring(exp2)
+        return parsed_expr1 == parsed_expr2
+    except Exception:
+        return False
+    
+# Counts the number of unique predicates in a logical expression.
+def count_predicates(expression):
+    predicate_pattern = r'\b[A-Za-z]+\d*\([^()]*\)'
+    predicates = re.findall(predicate_pattern, expression)
+    predicate_set = {re.sub(r'\([^()]*\)', '', pred).strip() for pred in predicates}
+    return len(predicate_set)
+
+# Checks if two logical expressions are equivalent using Prover9.
+def equivalence(expr1_str, expr2_str):
+    try:
+        # Set the path to the Prover9 binary file
+        os.environ['PROVER9'] = '/path/to/prover9/bin'  # Update with the actual path to Prover9 binary
+        prover = Prover9()
+        abstracted_expr1 = predicate_abstraction(expr1_str)
+        abstracted_expr2 = predicate_abstraction(expr2_str)
+        expr1 = Expression.fromstring(to_nltk(abstracted_expr1))
+        expr2 = Expression.fromstring(to_nltk(abstracted_expr2))
+        return expr1.equiv(expr2)
+    except Exception as e:
+        logging.error(f"An error occurred during equivalence check: {e}", exc_info=True)
+        return None
+    
+
+def tokenize_data(dataset, tokenizer):
+    def tokenize_function(examples):
+        # Tokenize both 'NL' and 'FOL' using padding and truncation
+        model_inputs = tokenizer(examples['NL'], padding='max_length', truncation=True, max_length=128)
+        labels = tokenizer(examples['FOL'], padding='max_length', truncation=True, max_length=128)
+        return {'input_ids': model_inputs['input_ids'], 'attention_mask': model_inputs['attention_mask'], 'labels': labels['input_ids']}
+    
+    # Apply tokenization to the dataset
+    tokenized_dataset = dataset.map(tokenize_function, batched=True)
+    tokenized_dataset.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
+    return tokenized_dataset
+
+# In this part, I used my own dataset. You can also use a dataset from HuggingFace, e.g., yuan-yang/MALLS-v0
+def load_and_preprocess_data(tokenizer):
+    dataset = pd.read_excel('/path/to/dataset') # Update with the actual path to your dataset
+    
+    train_data, test_data = train_test_split(dataset, test_size=0.03, random_state=42)
+    train_data, validation_data = train_test_split(train_data, test_size=0.1, random_state=42)
+    
+    print(f"Train Dataset size: {len(train_data)}")
+    print(f"Validation Dataset size: {len(validation_data)}")
+    print(f"Test Dataset size: {len(test_data)}")
+    
+    train_data = Dataset.from_pandas(train_data)
+    validation_data = Dataset.from_pandas(validation_data)
+    test_data = Dataset.from_pandas(test_data)
+    
+    train_data = train_data.map(lambda x: {'NL': 'translate English to First-order Logic: ' + nl_preprocess(x['NL_sentence']), 'FOL': fol_preprocess(x['FOL_expression'])})
+    validation_data = validation_data.map(lambda x: {'NL': 'translate English to First-order Logic: ' + nl_preprocess(x['NL_sentence']), 'FOL': fol_preprocess(x['FOL_expression'])})
+    test_data = test_data.map(lambda x: {'NL': 'translate English to First-order Logic: ' + nl_preprocess(x['NL_sentence']), 'FOL': fol_preprocess(x['FOL_expression'])})
+    
+    train_data = tokenize_data(train_data, tokenizer)
+    validation_data = tokenize_data(validation_data, tokenizer)
+    test_data = tokenize_data(test_data, tokenizer)
+    
+    return train_data, validation_data, test_data
+
+# This part is for evalauting the fine-tuned model
+
+# Load the model and the tokenizer from the saved directory, 
+model_path = './model_output/trained_model'
+tokenizer = T5Tokenizer.from_pretrained(model_path)
+model = T5ForConditionalGeneration.from_pretrained(model_path)
+
+# This part evalautes the model based on four metrics, which I believe are appropriate for nl_to_fol tasks
+def evaluation(test_dataset, model, tokenizer, device, min_length=1, num_beams=5, length_penalty=2.0, early_stopping=False):
+    accurate_predictions = 0
+    formally_accurate_predictions = 0
+    well_formed_predictions = 0
+    ill_formed_predictions = 0
+    equivalent_predictions = 0
+    total_predictions = len(test_dataset)
+    
+    for i in range(total_predictions):
+        input_ids = test_dataset[i]['input_ids'].unsqueeze(0).to(device)
+        labels = test_dataset[i]['labels'].unsqueeze(0).to(device)
+        
+        sentence = tokenizer.decode(input_ids[0], skip_special_tokens=True)
+        nl_sentence = ' '.join([token.split('_')[0] for token in sentence.replace("translate English to First-order Logic: ", "").split()])
+        
+        print("NL Sentence:", nl_sentence)
+        
+        with torch.no_grad():
+            outputs = model.generate(
+                input_ids,
+                max_length=256,
+                min_length=min_length,
+                num_beams=num_beams,
+                length_penalty=length_penalty,
+                early_stopping=early_stopping
+            )
+        
+        prediction = fol_postprocess(tokenizer.decode(outputs[0], skip_special_tokens=True))
+        reference = fol_postprocess(tokenizer.decode(labels[0], skip_special_tokens=True))
+
+        print("Prediction:", prediction)
+        print("Reference:", reference)
+        
+        well_formed_pred = check_grammar(prediction)
+        well_formed_ref = check_grammar(reference)
+
+        print("Well-formed Prediction:", well_formed_pred)
+        print("Ill-formed Reference:", well_formed_ref)
+
+        if well_formed_pred and well_formed_ref:
+            well_formed_predictions += 1
+            
+            if prediction == reference:
+                accurate_predictions += 1
+            
+            if compare_structure(prediction, reference):
+                formally_accurate_predictions += 1
+            else:
+                if equivalence(prediction, reference):
+                    equivalent_predictions += 1
+
+        else:
+            ill_formed_predictions += 1
+    
+    adjusted_total_predictions = max(total_predictions - ill_formed_predictions, 1)
+
+    accuracy_rate = accurate_predictions / adjusted_total_predictions
+    well_formed_rate = well_formed_predictions / total_predictions
+    formal_rate = formally_accurate_predictions / adjusted_total_predictions
+    equivalent_rate = (equivalent_predictions + formally_accurate_predictions)  / adjusted_total_predictions
+
+    return accuracy_rate, well_formed_rate, formal_rate, equivalent_rate
+
+accuracy_rate, well_formed_rate, formal_rate, equivalent_rate = evaluation(test_dataset, model, tokenizer, device)
+print(f"Well-formedness rate on the test set: {well_formed_rate:.4f}")
+print(f"Accuracy on the test set (excluding ungrammatical): {accuracy_rate:.4f}")
+print(f"Formal Accuracy on the test set: {formal_rate:.4f}")
+print(f"Equivalence on the test set: {equivalent_rate:.4f}")
