@@ -5,3 +5,6 @@ This code is a slightly modified version of the one used for training and evalua
 For the equivalence metric to function properly, Prover9 must be downloaded from the following website: [Prover9](https://www.cs.unm.edu/~mccune/prover9/).
 
 The dataset used for this thesis will be released following the publication of a paper derived from the thesis.
+
+![image](https://github.com/user-attachments/assets/62c494bd-a534-4bae-a711-ecbd7ee25ed8)
+
